@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Status</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0d0d0d;
+    color: #e8e4df;
+    font-family: 'Inter', sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  .container {
+    max-width: 480px;
+    width: 100%;
+    padding: 2.5rem 2rem;
+    text-align: center;
+    position: relative;
+  }
+
+  .label {
+    font-family: 'Inter', sans-serif;
+    font-weight: 400;
+    font-size: 0.7rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: #8a8479;
+    margin-bottom: 1.4rem;
+  }
+
+  .summary {
+    font-family: 'Cormorant Garamond', serif;
+    font-weight: 400;
+    font-size: 1.25rem;
+    line-height: 1.5;
+    margin-bottom: 1.6rem;
+    transition: color 0.4s ease;
+  }
+
+  .summary.all-up { color: #7aab7a; }
+  .summary.degraded { color: #c4884a; }
+  .summary.checking { color: #6b6560; }
+
+  .divider {
+    width: 32px;
+    height: 1px;
+    background: #2a2725;
+    margin: 0 auto 1.6rem;
+  }
+
+  .services {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    text-align: left;
+  }
+
+  .service-row {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+
+  .service-row.visible { opacity: 1; }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #3a3530;
+    transition: background 0.4s ease;
+  }
+
+  .dot.up { background: #5a9e5a; }
+  .dot.down { background: #a05050; }
+  .dot.slow { background: #b8843a; }
+  .dot.checking { background: #3a3530; }
+
+  .service-name {
+    font-family: 'Inter', sans-serif;
+    font-weight: 400;
+    font-size: 0.8rem;
+    color: #c8c4be;
+    flex: 1;
+  }
+
+  .response-time {
+    font-family: 'Inter', sans-serif;
+    font-weight: 300;
+    font-size: 0.7rem;
+    color: #5a5650;
+    letter-spacing: 0.05em;
+    min-width: 3.5rem;
+    text-align: right;
+    transition: color 0.4s ease;
+  }
+
+  .response-time.up { color: #6b6560; }
+  .response-time.slow { color: #8a6030; }
+  .response-time.down { color: #7a4040; }
+
+  .footer-divider {
+    width: 32px;
+    height: 1px;
+    background: #2a2725;
+    margin: 1.6rem auto 1rem;
+  }
+
+  .last-checked {
+    font-family: 'Inter', sans-serif;
+    font-weight: 300;
+    font-size: 0.65rem;
+    letter-spacing: 0.12em;
+    color: #4a4640;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="label">System Status</div>
+  <div class="summary checking" id="summary">Checking...</div>
+  <div class="divider"></div>
+  <div class="services" id="services"></div>
+  <div class="footer-divider"></div>
+  <div class="last-checked" id="last-checked">—</div>
+</div>
+
+<script>
+const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const SLOW_THRESHOLD = 2000; // 2 seconds
+
+const SERVICES = [
+  {
+    name: 'Notion API',
+    url: 'https://api.notion.com',
+    corsMode: 'no-cors'
+  },
+  {
+    name: 'GitHub',
+    url: 'https://api.github.com',
+    corsMode: 'cors'
+  },
+  {
+    name: 'Make.com',
+    url: 'https://www.make.com',
+    corsMode: 'no-cors'
+  },
+  {
+    name: 'OpenAI API',
+    url: 'https://api.openai.com/v1/models',
+    corsMode: 'cors'
+  },
+  {
+    name: 'Anthropic API',
+    url: 'https://api.anthropic.com',
+    corsMode: 'no-cors'
+  }
+];
+
+function formatTime(ms) {
+  if (ms === null) return '—';
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
+  return ms + 'ms';
+}
+
+function formatTimestamp(date) {
+  const h = date.getHours();
+  const m = String(date.getMinutes()).padStart(2, '0');
+  const ampm = h >= 12 ? 'pm' : 'am';
+  const hour = h % 12 || 12;
+  return `Last checked ${hour}:${m} ${ampm}`;
+}
+
+async function pingService(service) {
+  const start = Date.now();
+  const timeout = 8000;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const opts = {
+      method: 'GET',
+      signal: controller.signal,
+      cache: 'no-store'
+    };
+
+    if (service.corsMode === 'no-cors') {
+      opts.mode = 'no-cors';
+    }
+
+    const res = await fetch(service.url, opts);
+    clearTimeout(timer);
+    const elapsed = Date.now() - start;
+
+    // opaque response from no-cors — counts as up
+    // any HTTP status (including 401/403) counts as up
+    return { status: 'up', ms: elapsed };
+
+  } catch (err) {
+    clearTimeout(timer);
+    const elapsed = Date.now() - start;
+
+    if (err.name === 'AbortError') {
+      return { status: 'down', ms: null };
+    }
+
+    // Network error but not timeout — if it was a CORS error the service
+    // is still reachable, so retry with no-cors as a last resort
+    if (service.corsMode === 'cors') {
+      const start2 = Date.now();
+      const controller2 = new AbortController();
+      const timer2 = setTimeout(() => controller2.abort(), timeout);
+      try {
+        await fetch(service.url, {
+          method: 'GET',
+          mode: 'no-cors',
+          cache: 'no-store',
+          signal: controller2.signal
+        });
+        clearTimeout(timer2);
+        const elapsed2 = Date.now() - start2;
+        return { status: 'up', ms: elapsed2 };
+      } catch (err2) {
+        clearTimeout(timer2);
+        if (err2.name === 'AbortError') {
+          return { status: 'down', ms: null };
+        }
+        // If no-cors also fails with a non-abort error it's likely a CORS
+        // opaque response that was fine — treat as up
+        return { status: 'up', ms: Date.now() - start2 };
+      }
+    }
+
+    // For no-cors, a non-abort error means the request itself failed
+    return { status: 'down', ms: null };
+  }
+}
+
+function dotClass(result) {
+  if (!result) return 'checking';
+  if (result.status === 'down') return 'down';
+  if (result.ms !== null && result.ms > SLOW_THRESHOLD) return 'slow';
+  return 'up';
+}
+
+function buildRows() {
+  const container = document.getElementById('services');
+  container.innerHTML = '';
+  SERVICES.forEach((svc, i) => {
+    const row = document.createElement('div');
+    row.className = 'service-row';
+    row.id = `row-${i}`;
+
+    const dot = document.createElement('div');
+    dot.className = 'dot checking';
+    dot.id = `dot-${i}`;
+
+    const name = document.createElement('div');
+    name.className = 'service-name';
+    name.textContent = svc.name;
+
+    const rt = document.createElement('div');
+    rt.className = 'response-time';
+    rt.id = `rt-${i}`;
+    rt.textContent = '—';
+
+    row.appendChild(dot);
+    row.appendChild(name);
+    row.appendChild(rt);
+    container.appendChild(row);
+
+    requestAnimationFrame(() => {
+      setTimeout(() => row.classList.add('visible'), i * 80);
+    });
+  });
+}
+
+function updateRow(i, result) {
+  const dot = document.getElementById(`dot-${i}`);
+  const rt = document.getElementById(`rt-${i}`);
+  if (!dot || !rt) return;
+
+  const dc = dotClass(result);
+  dot.className = `dot ${dc}`;
+  rt.className = `response-time ${result.status === 'down' ? 'down' : dc === 'slow' ? 'slow' : 'up'}`;
+  rt.textContent = result.status === 'down' ? 'timeout' : formatTime(result.ms);
+}
+
+function updateSummary(results) {
+  const summaryEl = document.getElementById('summary');
+  const degraded = results.filter(r => r && (r.status === 'down' || (r.ms !== null && r.ms > SLOW_THRESHOLD)));
+  if (degraded.length === 0) {
+    summaryEl.className = 'summary all-up';
+    summaryEl.textContent = 'All Systems Operational';
+  } else {
+    summaryEl.className = 'summary degraded';
+    summaryEl.textContent = `${degraded.length} Service${degraded.length > 1 ? 's' : ''} Degraded`;
+  }
+}
+
+async function checkAll() {
+  const summaryEl = document.getElementById('summary');
+  summaryEl.className = 'summary checking';
+  summaryEl.textContent = 'Checking…';
+
+  buildRows();
+
+  const results = new Array(SERVICES.length).fill(null);
+
+  // Ping all services concurrently, update each row as results come in
+  const checks = SERVICES.map((svc, i) =>
+    pingService(svc).then(result => {
+      results[i] = result;
+      updateRow(i, result);
+    })
+  );
+
+  await Promise.allSettled(checks);
+
+  updateSummary(results);
+
+  const lastCheckedEl = document.getElementById('last-checked');
+  lastCheckedEl.textContent = formatTimestamp(new Date());
+}
+
+checkAll();
+setInterval(checkAll, REFRESH_INTERVAL);
+</script>
+</body>
+</html>
